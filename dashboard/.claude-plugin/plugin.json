@@ -1,1 +1,1 @@
-{ "name": "dashboard", "version": "0.2.0", "description": "Bands above the prompt: cost and cache stats, unlogged-edits reminder, and a prompt fixer", "types": "./types/index.d.ts" }
+{ "name": "dashboard", "version": "0.3.1", "description": "Bands above the prompt: cost and cache stats, unlogged-edits reminder, and a prompt fixer", "types": "./types/index.d.ts" }

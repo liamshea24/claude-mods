@@ -4,91 +4,130 @@ import type { EngineInterface, Register, ThemeMessageRule, ThemeSetArgs } from '
 import { makeColors } from './make-colors.js'
 import { buildHighway } from './highway.js'
 import type { Phase, Weather } from './highway.js'
-import { localClock, NWS_URL, phaseAt, WEATHER_URL, weatherFromCode, weatherFromText } from './sky.js'
+import { localClock, localDate, NWS_URL, phaseAt, seasonAt, WEATHER_URL, weatherFromCode, weatherFromText } from './sky.js'
 import { WHEEL, WORDS } from './spinner.js'
 
 type Color = NonNullable<ThemeMessageRule['color']>
 
 type Hex = `#${string}`
 const WHITE: Hex = '#ffffff'
-const BLACK: Hex = '#000000'
+const BLACK: Hex = '#141c12'
 type Anchors4 = [Hex, Hex, Hex, Hex]
 type Anchors5 = [Hex, Hex, Hex, Hex, Hex]
 
 // One palette per mode. The message colors (user bubble, assistant bubble) are set
 // from the same anchors as the page, so the chat and the text box always agree.
-const mk = (label: string, accent: Hex, light: Anchors4, dark: Anchors5) => {
-  const { theme } = makeColors({
-    label,
-    roles: { accent, danger: '#d63a2f', success: '#3f9a52', warning: '#c98a10', pro: '#8a5fc9' },
-    light: {
-      gray: {
-        anchors: {
-          'surface-0': light[0],
-          'surface-1': light[1],
-          'surface-2': light[2],
-          'text-primary': light[3],
-          'text-secondary': '#4a4a4a',
-          'text-muted': '#626262',
-        },
-      },
-    },
-    dark: {
-      gray: {
-        anchors: {
-          'surface-0': dark[0],
-          'surface-1': dark[1],
-          'surface-2': dark[2],
-          'surface-3': dark[3],
-          'text-primary': dark[4],
-          'text-secondary': '#c9c9c9',
-          'text-muted': '#a3a3a3',
-        },
-      },
-    },
-  })
-
-  return {
-    ...theme,
-    inputs: {
-      light: {
-        ...theme.inputs.light,
-        'bg-user-message': BLACK,
-        'text-user-message': WHITE,
-        'bg-assistant-message': BLACK,
-        'text-assistant-message': WHITE,
-      },
-      dark: {
-        ...theme.inputs.dark,
-        'bg-user-message': BLACK,
-        'text-user-message': WHITE,
-        'bg-assistant-message': BLACK,
-        'text-assistant-message': WHITE,
+const mk = (label: string, accent: Hex, light: Anchors4, dark: Anchors5, bright = false) => {
+  const roles = { accent, danger: '#d63a2f', success: '#3f9a52', warning: '#c98a10', pro: '#8a5fc9' }
+  const lightMode = {
+    gray: {
+      anchors: {
+        'surface-0': light[0],
+        'surface-1': light[1],
+        'surface-2': light[2],
+        'text-primary': light[3],
+        'text-secondary': '#4a4a4a',
+        'text-muted': '#626262',
       },
     },
   }
+  const darkMode = {
+    gray: {
+      anchors: {
+        'surface-0': dark[0],
+        'surface-1': dark[1],
+        'surface-2': dark[2],
+        'surface-3': dark[3],
+        'text-primary': dark[4],
+        'text-secondary': bright ? '#e6e6ea' : '#c9c9c9',
+        'text-muted': bright ? '#c2c2ca' : '#a3a3a3',
+      },
+    },
+  }
+  // A look made for one mode (white text on dark panels) is declared dark-only; a light half with white
+  // text is refused by the theme builder, and a refused theme keeps the previous version running.
+  const { theme } = makeColors(bright ? { label, roles, only: 'dark', dark: darkMode } : { label, roles, light: lightMode, dark: darkMode })
+  const messages = { 'bg-user-message': BLACK, 'text-user-message': WHITE, 'bg-assistant-message': BLACK, 'text-assistant-message': WHITE }
+
+  return {
+    ...theme,
+    inputs: bright
+      ? { dark: { ...theme.inputs.dark, ...messages } }
+      : { light: { ...theme.inputs.light, ...messages }, dark: { ...theme.inputs.dark, ...messages } },
+  }
 }
 
-const base = { radius: 10, padding: 12, borderWidth: 1 } as const
-const user = (accent: Color): ThemeMessageRule => ({ ...base, backgroundColor: '#000000', color: '#ffffff', borderColor: accent })
-// Every text box is black with white text; the user's bubble keeps a thin accent border.
-const reply: ThemeMessageRule = { ...base, backgroundColor: '#000000', color: '#ffffff', borderColor: '#2b2b2b' }
+// Smoked glass. The app only accepts a text style whose colours all keep white text readable, so every
+// colour here is dark or mid-tone: a translucent dark-navy body, a mid-blue rim, a lighter highlight along
+// the top and left, a depth line along the bottom and a glint in the corner. No white fills.
+const rr = (i: number, r: number) =>
+  `M${i + r} ${i}H${96 - i - r}A${r} ${r} 0 0 1 ${96 - i} ${i + r}V${96 - i - r}A${r} ${r} 0 0 1 ${96 - i - r} ${96 - i}H${i + r}A${r} ${r} 0 0 1 ${i} ${96 - i - r}V${i + r}A${r} ${r} 0 0 1 ${i + r} ${i}Z`
+const GLASS_FRAME = {
+  viewBox: 96,
+  slice: 28,
+  paths: [
+    { d: rr(0.5, 27), color: '#0b132299' },
+    { d: rr(1, 26), strokeWidth: 1.2, color: '#6f7e99' },
+    { d: rr(4, 23), strokeWidth: 1, color: '#2b3650' },
+    { d: 'M2 28A26 26 0 0 1 28 2H68', strokeWidth: 1.8, color: '#8493ae' },
+    { d: 'M94 68A26 26 0 0 1 68 94H28', strokeWidth: 1.4, color: '#566581' },
+    { d: 'M30 91H66', strokeWidth: 3, color: '#00000052' },
+    { d: 'M14 12A12 12 0 0 1 26 8Q18 10 14 18Z', color: '#7f8da8' },
+  ],
+} as const
+const GLASS_SHEEN = { angle: 135, stops: [{ at: 0, color: '#1c2a45a6' }, { at: 0.6, color: '#0b132299' }, { at: 1, color: '#142038a6' }] } as const
+type Frame = 'frame' | 'sheen' | 'clear'
+const pane = (tint: Color, kind: Frame): ThemeMessageRule =>
+  kind === 'clear'
+    ? { radius: 22, padding: 14, backgroundColor: '#0000', borderColor: '#0000', borderWidth: 0, color: '#ffffff' }
+    : {
+        radius: 22,
+        padding: 16,
+        backgroundColor: tint,
+        fill: kind === 'frame' ? { vector: GLASS_FRAME } : { gradient: GLASS_SHEEN },
+        borderColor: '#6f7e99',
+        borderWidth: 1,
+        shadow: { x: 0, y: 8, blur: 26, color: '#00000066' },
+        color: '#ffffff',
+      }
+const user = (kind: Frame): ThemeMessageRule => pane('#14224099', kind)
+const reply = (kind: Frame): ThemeMessageRule => pane('#0b132299', kind)
+
+// If the app refuses any of that, the same look is applied without the box styling.
+const plain = (look: ThemeSetArgs): ThemeSetArgs => {
+  const copy = JSON.parse(JSON.stringify(look)) as { style?: Record<string, unknown>; backdrop?: Record<string, unknown> }
+
+  if (copy.style !== undefined) {
+    delete copy.style.UserMessage
+    delete copy.style.AssistantMessage
+    delete copy.style.ToolUse
+  }
+  if (copy.backdrop !== undefined) {
+    delete copy.backdrop.glass
+  }
+
+  return copy as ThemeSetArgs
+}
+
+const racing = (kind: Frame): ThemeSetArgs => ({
+  colors: mk('Highway', '#2563b0', ['#141c12', '#182016', '#1c261a', '#ffffff'], ['#141c12', '#182016', '#1c261a', '#212c1f', '#ffffff'], true),
+  overrideColorScheme: 'dark',
+  // No frosting: the app's panels are not blurred or tinted behind the chat and the type box.
+  backdrop: { scene: 'racing', glass: false },
+  style: {
+    Text: { fontFamily: ['mono'], color: '#ffffff' },
+    UserMessage: user(kind),
+    AssistantMessage: reply(kind),
+    ToolUse: { ...pane('#0b132266', kind), radius: 14, padding: undefined, paddingX: 12, paddingY: 6, shadow: 'none' },
+  },
+})
 
 const LOOKS: Record<string, ThemeSetArgs> = {
-  racing: {
-    colors: mk('Highway', '#2563b0', ['#e9eaec', '#f1f2f4', '#f8f9fa', '#16181d'], ['#000000', '#000000', '#050505', '#0b0b0b', '#f2f2f2']),
-    backdrop: { scene: 'racing', glass: false },
-    style: {
-      Text: { fontFamily: ['mono'] },
-      UserMessage: user('#2563b0'),
-      AssistantMessage: reply,
-      ToolUse: { color: '#ffffff', backgroundColor: '#000000', radius: 6, paddingX: 8 },
-    },
-  },
+  racing: racing('frame'),
   synthwave: {
     colors: mk('Synthwave', '#ff3ec8', ['#f1e9fb', '#f7f1fd', '#fcf9ff', '#22103a'], ['#150a26', '#1d0f33', '#26143f', '#2e1a4a', '#f4e8ff']),
     backdrop: { color: 'surface-0' },
-    style: { UserMessage: user('#9a2bc4'), AssistantMessage: reply },
+    style: { UserMessage: user('sheen'), AssistantMessage: reply('sheen') },
   },
   forest: {
     colors: mk('Forest', '#3f8f5a', ['#e6ecdf', '#eef3e8', '#f6f9f1', '#1c2a1d'], ['#0f1a12', '#16241a', '#1d2d21', '#243627', '#e6f0e4']),
@@ -98,7 +137,7 @@ const LOOKS: Record<string, ThemeSetArgs> = {
   },
 }
 
-const sky = atom({ plugin: 'racing-themes', key: 'sky' } as const, { phase: 'day', wx: 'clear', tempF: null, note: '' })
+const sky = atom({ plugin: 'racing-themes', key: 'sky' } as const, { phase: 'day', wx: 'clear', tempF: null, note: '', ctx: 0, usd: 0, five: 0 })
 
 // What the person forced with /time and /weather; otherwise the real Chapel Hill sky.
 let forcedPhase: Phase | undefined
@@ -106,15 +145,39 @@ let forcedWx: Weather | undefined
 let tick = 0
 const SCENES = new Map<string, string>()
 
-const sceneFor = (phase: Phase, wx: Weather): string => {
-  const key = `${phase}/${wx}`
+const WX_WORD: Record<Weather, string> = { clear: 'CLEAR', cloudy: 'CLOUDY', fog: 'FOG', rain: 'RAIN', storm: 'STORM', snow: 'SNOW' }
+
+// The message sign's pages (up to three lines each). The time is rounded to 5 minutes so the sign
+// repaints (and restarts its cycle) rarely, and the chat stats page waits until there are numbers.
+const pagesFor = (s: { wx: Weather; tempF: number | null; ctx?: number; usd?: number; five?: number }, now: number): string[][] => {
+  const stamp = now - (now % 300_000)
+  const pages: string[][] = [
+    ['CHAPEL HILL', s.tempF === null ? WX_WORD[s.wx] : `${Math.round(s.tempF)}F ${WX_WORD[s.wx]}`],
+    [localDate(stamp), localClock(stamp)],
+  ]
+
+  if ((s.ctx ?? 0) > 0 || (s.usd ?? 0) > 0) {
+    pages.push([`CONTEXT ${Math.round(s.ctx ?? 0)}%`, `COST $${(s.usd ?? 0).toFixed(2)}`, `5H LIMIT ${Math.round(s.five ?? 0)}%`])
+  }
+
+  return pages
+}
+
+const sceneFor = (phase: Phase, wx: Weather, pages: string[][], season: ReturnType<typeof seasonAt>): string => {
+  const key = `${phase}/${wx}/${JSON.stringify(pages)}/${season}`
   const hit = SCENES.get(key)
 
   if (hit !== undefined) {
     return hit
   }
-  const built = buildHighway(phase, wx)
+  // The picture has a hard size limit; if the sign's lettering would push it over, draw without the sign.
+  let built = buildHighway(phase, wx, pages, season)
 
+  if (built.length > 130_500) {
+    built = buildHighway(phase, wx, [], season)
+  }
+
+  SCENES.clear()
   SCENES.set(key, built)
 
   return built
@@ -146,7 +209,7 @@ async function refreshSky($: EngineInterface, withWeather: boolean) {
     }
     note = `Open-Meteo HTTP ${res.status}`
   } catch (error) {
-    note = `Open-Meteo: ${String(error).slice(0, 60)}`
+    note = `Open-Meteo: ${String(error).slice(0, 260)}`
   }
   try {
     const res = await $.http.fetch(NWS_URL, { headers: { 'User-Agent': 'claude-mods-highway', Accept: 'application/geo+json' } })
@@ -162,9 +225,23 @@ async function refreshSky($: EngineInterface, withWeather: boolean) {
     }
     note = `${note}; NWS HTTP ${res.status}`
   } catch (error) {
-    note = `${note}; NWS: ${String(error).slice(0, 60)}`
+    note = `${note}; NWS: ${String(error).slice(0, 260)}`
   }
   await update($, sky, s => ({ ...s, wx: forcedWx ?? s.wx, note }))
+}
+
+// Applies the first look the app accepts: glass frames, then the sheen, then no box styling at all.
+async function applyLook($: EngineInterface, variants: ThemeSetArgs[]) {
+  for (const v of variants) {
+    try {
+      return await $.theme.set(v)
+    } catch (error) {
+      $.ui.log(String(error))
+    }
+  }
+  const first = variants[0]
+
+  return $.theme.set(first === undefined ? {} : plain(first))
 }
 
 export const register: Register = on => {
@@ -172,22 +249,26 @@ export const register: Register = on => {
     await $.command.register({ name: 'look', description: `Switch look: ${Object.keys(LOOKS).join(', ')}` })
     await $.command.register({ name: 'weather', description: 'Chapel Hill time and weather for the highway; /weather rain forces it, /weather auto goes back to live' })
     await $.command.register({ name: 'time', description: 'Force the highway to day, dusk or night; /time auto goes back to the real Chapel Hill time' })
-    await refreshSky($, true)
-    $.clock.every(60_000, () => {
-      tick += 1
-      void refreshSky($, tick % 15 === 0)
-    })
+    // Apply the look first, so a slow weather request can never hold it up.
     try {
-      const racing = LOOKS.racing
+      const set = await applyLook($, [racing('frame'), racing('sheen'), racing('clear')])
 
-      if (racing !== undefined) {
-        const set = await $.theme.set(racing)
-
-        $.ui.toast(set.isDrawn ? 'Highway look applied: look between the chat and the Environment panel' : `Highway backdrop not drawn here: ${set.reason}`)
-      }
+      $.ui.toast(set.isDrawn ? 'Highway look applied' : `Highway backdrop not drawn here: ${set.reason}`)
     } catch (error) {
       $.ui.log(String(error))
     }
+    // Time of day now (no network), weather in the background, and a redraw so a reloaded mod repaints.
+    try {
+      await update($, sky, s => ({ ...s, phase: phaseAt(Date.now()) }))
+    } catch (error) {
+      $.ui.log(String(error))
+    }
+    refreshSky($, true).catch(error => $.ui.log(String(error)))
+    $.clock.every(60_000, () => {
+      tick += 1
+      refreshSky($, tick % 15 === 0).catch(error => $.ui.log(String(error)))
+    })
+    $.ui.invalidate('ui.render')
 
     return next(e)
   })
@@ -200,7 +281,7 @@ export const register: Register = on => {
       return { text: `Looks: ${Object.keys(LOOKS).join(', ')}. Usage: /look racing` }
     }
     try {
-      const set = await $.theme.set(look)
+      const set = await applyLook($, name === 'racing' ? [racing('frame'), racing('sheen'), racing('clear')] : [look])
 
       return { text: set.isDrawn ? `Look: ${name}` : `Set, but nothing draws it here: ${set.reason}` }
     } catch (error) {
@@ -241,6 +322,32 @@ export const register: Register = on => {
     return { text: `Highway time of day: ${s.phase}${forcedPhase === undefined ? ' (real Chapel Hill time)' : ' (forced)'}. Options: /time day | dusk | night | auto` }
   })
 
+  // Chat stats for the sign: repaint only when they move a good step, so the sign keeps cycling.
+  on('session.measure', async ($, e, next) => {
+    const five = e.rateLimits.find(l => l.kind.includes('five'))
+    const ctx = Math.round(e.context.percent ?? 0)
+    const usd = e.cost?.usd ?? 0
+    const fivePct = Math.round(five?.percentUsed ?? 0)
+
+    try {
+      const before = await read($, sky)
+      const moved =
+        Math.floor(ctx / 5) !== Math.floor((before.ctx ?? 0) / 5) ||
+        Math.floor(usd * 2) !== Math.floor((before.usd ?? 0) * 2) ||
+        Math.floor(fivePct / 5) !== Math.floor((before.five ?? 0) / 5) ||
+        (before.ctx ?? 0) + (before.usd ?? 0) === 0
+
+      await update($, sky, s => ({ ...s, ctx, usd, five: fivePct }))
+      if (moved) {
+        $.ui.invalidate('ui.render')
+      }
+    } catch (error) {
+      $.ui.log(String(error))
+    }
+
+    return next(e)
+  })
+
   on('ui.render', { component: 'Backdrop' }, async ($, e, next) => {
     if (e.props.scene !== 'racing' || (e.surface !== 'desktop' && e.surface !== 'mobile')) {
       return next(e)
@@ -248,7 +355,7 @@ export const register: Register = on => {
     const { Svg } = $.ui.resolve(e)
     const s = await read($, sky)
 
-    return <Svg source={sceneFor(s.phase, s.wx)} alt={`A top-down highway at ${s.phase}, ${s.wx}, with police chasing sports cars through traffic`} isInteractive />
+    return <Svg source={sceneFor(s.phase, s.wx, pagesFor(s, Date.now()), seasonAt(Date.now()))} alt={`A top-down highway at ${s.phase}, ${s.wx}, with police chasing sports cars through traffic`} isInteractive />
   })
 
   // The working line: a wheel doing a burnout, with a driving word for what the turn is doing.

@@ -3,6 +3,9 @@ export type Sky = {
   wx: 'clear' | 'cloudy' | 'fog' | 'rain' | 'storm' | 'snow'
   tempF: number | null
   note: string
+  ctx?: number
+  usd?: number
+  five?: number
 }
 
 declare module 'claude-code' {

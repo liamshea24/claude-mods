@@ -1,4 +1,4 @@
-import type { Phase, Weather } from './highway.js'
+import type { Phase, Season, Weather } from './highway.js'
 
 // Chapel Hill, NC.
 export const LAT = 35.9132
@@ -27,6 +27,13 @@ export const localClock = (utcMs: number): string => {
   const m = d.getUTCMinutes()
 
   return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
+}
+
+// Chapel Hill's day and date, like SAT NOV 23.
+export const localDate = (utcMs: number): string => {
+  const d = new Date(utcMs + easternOffsetHours(utcMs) * 3_600_000)
+
+  return `${['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'][d.getUTCDay()]} ${['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'][d.getUTCMonth()]} ${d.getUTCDate()}`
 }
 
 // The sun's height above the horizon in degrees, for Chapel Hill (a standard low-precision formula).
@@ -79,4 +86,11 @@ export const weatherFromText = (text: string): Weather => {
   if (t.includes('cloud') || t.includes('overcast')) return 'cloudy'
 
   return 'clear'
+}
+
+// The season from the date (Chapel Hill's calendar months), for the foliage and fields.
+export const seasonAt = (utcMs: number): Season => {
+  const m = new Date(utcMs + easternOffsetHours(utcMs) * 3_600_000).getUTCMonth()
+
+  return m <= 1 || m === 11 ? 'winter' : m <= 4 ? 'spring' : m <= 7 ? 'summer' : 'fall'
 }
