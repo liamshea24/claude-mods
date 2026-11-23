@@ -1,1 +1,1 @@
-{ "name": "racing-themes", "version": "0.1.0", "description": "Racing, synthwave, forest and ocean looks; switch with /theme" }
+{ "name": "racing-themes", "version": "0.5.0", "description": "Top-down highway backdrop with Chapel Hill time and weather, merging traffic with blinkers, breakdowns, crashes that block a lane and make a queue, police chases, farmland, and a burnout spinner", "types": "./types/index.d.ts" }

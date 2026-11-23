@@ -1,1 +1,1 @@
-{ "name": "guardrails", "version": "0.1.0", "description": "Blast-radius confirmation, collision guard and secret guard" }
+{ "name": "guardrails", "version": "0.2.0", "description": "Confirms destructive commands and pushes, protects files, warns about collisions, and guards secrets", "types": "./types/index.d.ts" }

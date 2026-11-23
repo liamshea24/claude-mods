@@ -1,13 +1,17 @@
-import type { Register, ThemeMessageRule, ThemeSetArgs } from 'claude-code'
+import { atom, read, update } from 'claude-code'
+import type { EngineInterface, Register, ThemeMessageRule, ThemeSetArgs } from 'claude-code'
 
 import { makeColors } from './make-colors.js'
 import { buildHighway } from './highway.js'
+import type { Phase, Weather } from './highway.js'
+import { localClock, NWS_URL, phaseAt, WEATHER_URL, weatherFromCode, weatherFromText } from './sky.js'
 import { WHEEL, WORDS } from './spinner.js'
 
 type Color = NonNullable<ThemeMessageRule['color']>
 
 type Hex = `#${string}`
 const WHITE: Hex = '#ffffff'
+const BLACK: Hex = '#000000'
 type Anchors4 = [Hex, Hex, Hex, Hex]
 type Anchors5 = [Hex, Hex, Hex, Hex, Hex]
 
@@ -49,36 +53,36 @@ const mk = (label: string, accent: Hex, light: Anchors4, dark: Anchors5) => {
     inputs: {
       light: {
         ...theme.inputs.light,
-        'bg-user-message': accent,
+        'bg-user-message': BLACK,
         'text-user-message': WHITE,
-        'bg-assistant-message': light[1],
-        'text-assistant-message': light[3],
+        'bg-assistant-message': BLACK,
+        'text-assistant-message': WHITE,
       },
       dark: {
         ...theme.inputs.dark,
-        'bg-user-message': accent,
+        'bg-user-message': BLACK,
         'text-user-message': WHITE,
-        'bg-assistant-message': dark[1],
-        'text-assistant-message': dark[4],
+        'bg-assistant-message': BLACK,
+        'text-assistant-message': WHITE,
       },
     },
   }
 }
 
 const base = { radius: 10, padding: 12, borderWidth: 1 } as const
-const user = (accent: Color): ThemeMessageRule => ({ ...base, backgroundColor: accent, color: '#ffffff', borderColor: accent })
-// Palette names follow light and dark, so these match the text box in both modes.
-const reply: ThemeMessageRule = { ...base, backgroundColor: 'surface-1', color: 'text-primary', borderColor: 'surface-3' }
+const user = (accent: Color): ThemeMessageRule => ({ ...base, backgroundColor: '#000000', color: '#ffffff', borderColor: accent })
+// Every text box is black with white text; the user's bubble keeps a thin accent border.
+const reply: ThemeMessageRule = { ...base, backgroundColor: '#000000', color: '#ffffff', borderColor: '#2b2b2b' }
 
 const LOOKS: Record<string, ThemeSetArgs> = {
   racing: {
-    colors: mk('Highway', '#2563b0', ['#e9eaec', '#f1f2f4', '#f8f9fa', '#16181d'], ['#101216', '#171a20', '#1e222a', '#262b35', '#eef0f3']),
+    colors: mk('Highway', '#2563b0', ['#e9eaec', '#f1f2f4', '#f8f9fa', '#16181d'], ['#000000', '#000000', '#050505', '#0b0b0b', '#f2f2f2']),
     backdrop: { scene: 'racing', glass: false },
     style: {
       Text: { fontFamily: ['mono'] },
       UserMessage: user('#2563b0'),
       AssistantMessage: reply,
-      ToolUse: { color: 'text-secondary', backgroundColor: 'surface-2', radius: 6, paddingX: 8 },
+      ToolUse: { color: '#ffffff', backgroundColor: '#000000', radius: 6, paddingX: 8 },
     },
   },
   synthwave: {
@@ -94,11 +98,85 @@ const LOOKS: Record<string, ThemeSetArgs> = {
   },
 }
 
-const SCENE = buildHighway()
+const sky = atom({ plugin: 'racing-themes', key: 'sky' } as const, { phase: 'day', wx: 'clear', tempF: null, note: '' })
+
+// What the person forced with /time and /weather; otherwise the real Chapel Hill sky.
+let forcedPhase: Phase | undefined
+let forcedWx: Weather | undefined
+let tick = 0
+const SCENES = new Map<string, string>()
+
+const sceneFor = (phase: Phase, wx: Weather): string => {
+  const key = `${phase}/${wx}`
+  const hit = SCENES.get(key)
+
+  if (hit !== undefined) {
+    return hit
+  }
+  const built = buildHighway(phase, wx)
+
+  SCENES.set(key, built)
+
+  return built
+}
+
+// Works out Chapel Hill's time of day from the clock, and every 15 minutes asks Open-Meteo for the weather.
+async function refreshSky($: EngineInterface, withWeather: boolean) {
+  const now = await $.clock.now()
+  const phase = forcedPhase ?? phaseAt(now)
+
+  await update($, sky, s => ({ ...s, phase }))
+  if (!withWeather) {
+    return
+  }
+  let note = 'weather unavailable'
+
+  // First choice: Open-Meteo. If it refuses (it rate-limits shared networks), the National Weather
+  // Service's Raleigh-Durham station is the backup.
+  try {
+    const res = await $.http.fetch(WEATHER_URL)
+
+    if (res.ok) {
+      const cur = (JSON.parse(res.text) as { current?: { temperature_2m?: number; weather_code?: number; cloud_cover?: number } }).current
+      const wx = forcedWx ?? weatherFromCode(cur?.weather_code ?? 0, cur?.cloud_cover ?? 0)
+
+      await update($, sky, s => ({ ...s, wx, tempF: cur?.temperature_2m ?? null, note: 'live, Open-Meteo' }))
+
+      return
+    }
+    note = `Open-Meteo HTTP ${res.status}`
+  } catch (error) {
+    note = `Open-Meteo: ${String(error).slice(0, 60)}`
+  }
+  try {
+    const res = await $.http.fetch(NWS_URL, { headers: { 'User-Agent': 'claude-mods-highway', Accept: 'application/geo+json' } })
+
+    if (res.ok) {
+      const props = (JSON.parse(res.text) as { properties?: { textDescription?: string; temperature?: { value?: number | null } } }).properties
+      const c = props?.temperature?.value
+      const wx = forcedWx ?? weatherFromText(props?.textDescription ?? '')
+
+      await update($, sky, s => ({ ...s, wx, tempF: typeof c === 'number' ? (c * 9) / 5 + 32 : null, note: 'live, National Weather Service (RDU)' }))
+
+      return
+    }
+    note = `${note}; NWS HTTP ${res.status}`
+  } catch (error) {
+    note = `${note}; NWS: ${String(error).slice(0, 60)}`
+  }
+  await update($, sky, s => ({ ...s, wx: forcedWx ?? s.wx, note }))
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'look', description: `Switch look: ${Object.keys(LOOKS).join(', ')}` })
+    await $.command.register({ name: 'weather', description: 'Chapel Hill time and weather for the highway; /weather rain forces it, /weather auto goes back to live' })
+    await $.command.register({ name: 'time', description: 'Force the highway to day, dusk or night; /time auto goes back to the real Chapel Hill time' })
+    await refreshSky($, true)
+    $.clock.every(60_000, () => {
+      tick += 1
+      void refreshSky($, tick % 15 === 0)
+    })
     try {
       const racing = LOOKS.racing
 
@@ -130,13 +208,47 @@ export const register: Register = on => {
     }
   })
 
-  on('ui.render', { component: 'Backdrop' }, ($, e, next) => {
+  on('command.run', { command: 'weather' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    const choices = ['clear', 'cloudy', 'fog', 'rain', 'storm', 'snow']
+
+    if (arg === 'auto') {
+      forcedWx = undefined
+      await refreshSky($, true)
+    } else if (choices.includes(arg)) {
+      forcedWx = arg as Weather
+      await update($, sky, s => ({ ...s, wx: arg as Weather }))
+    }
+    const s = await read($, sky)
+    const now = await $.clock.now()
+    const temp = s.tempF === null ? 'unknown temperature' : `${Math.round(s.tempF)}°F`
+
+    return { text: `Chapel Hill, ${localClock(now)}: ${s.phase}, ${s.wx}, ${temp} (${s.note || 'no weather yet'}). Options: /weather ${choices.join(' | ')} | auto` }
+  })
+
+  on('command.run', { command: 'time' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+
+    if (arg === 'auto') {
+      forcedPhase = undefined
+      await refreshSky($, false)
+    } else if (arg === 'day' || arg === 'dusk' || arg === 'night') {
+      forcedPhase = arg
+      await update($, sky, s => ({ ...s, phase: arg as Phase }))
+    }
+    const s = await read($, sky)
+
+    return { text: `Highway time of day: ${s.phase}${forcedPhase === undefined ? ' (real Chapel Hill time)' : ' (forced)'}. Options: /time day | dusk | night | auto` }
+  })
+
+  on('ui.render', { component: 'Backdrop' }, async ($, e, next) => {
     if (e.props.scene !== 'racing' || (e.surface !== 'desktop' && e.surface !== 'mobile')) {
       return next(e)
     }
     const { Svg } = $.ui.resolve(e)
+    const s = await read($, sky)
 
-    return <Svg source={SCENE} alt="A top-down highway with police chasing sports cars through traffic, night with lit lamps and day with lamps off" isInteractive />
+    return <Svg source={sceneFor(s.phase, s.wx)} alt={`A top-down highway at ${s.phase}, ${s.wx}, with police chasing sports cars through traffic`} isInteractive />
   })
 
   // The working line: a wheel doing a burnout, with a driving word for what the turn is doing.

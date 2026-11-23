@@ -9,8 +9,12 @@ const INITIAL: Dash = {
   fixBefore: '', fixAfter: '', isFixHidden: true, isFixOpen: false,
   sessionUsd: 0, startUsd: 0, lastUsd: 0, lastSecs: 0, reusePct: 0,
   ctxPct: 0, fiveHourPct: 0, lastTurnAt: 0,
+  budget: 0, isBudgetWarned: false, startedAt: 0,
 }
 const dash = atom({ plugin: 'dashboard', key: 's' } as const, INITIAL)
+const log = atom({ plugin: 'dashboard', key: 'log' } as const, { items: [], idx: 0 })
+
+const clip = (text: string, n = 500): string => (text.length > n ? `${text.slice(0, n)}...` : text)
 
 const FIXES: [RegExp, string][] = [
   [/\bi\b/g, 'I'],
@@ -34,6 +38,53 @@ const LOG_PROMPT =
   'Append a short entry to brain-log.md in the project root (create it if missing): today\'s date, the files changed in this chat and why, and decisions made. Keep it under 10 lines.'
 
 export const register: Register = on => {
+  on('session.start', async ($, e, next) => {
+    const now = await $.clock.now()
+
+    await update($, dash, s => ({ ...s, startedAt: s.startedAt > 0 ? s.startedAt : now }))
+    await $.command.register({ name: 'budget', description: 'Warn when this chat passes a dollar amount: /budget 5 (or /budget off)' })
+    await $.command.register({ name: 'edits', description: 'Step through the file edits made in this chat, one at a time' })
+    await $.command.register({ name: 'wrapup', description: 'Summarize this chat: what changed, what it cost, what is left' })
+
+    return next(e)
+  })
+
+  on('command.run', { command: 'budget' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    const usd = Number(arg.replace('$', ''))
+
+    if (arg === 'off' || arg === '0') {
+      await update($, dash, s => ({ ...s, budget: 0, isBudgetWarned: false }))
+
+      return { text: 'Budget alarm off.' }
+    }
+    if (!Number.isFinite(usd) || usd <= 0) {
+      const s = await read($, dash)
+
+      return { text: s.budget > 0 ? `Budget alarm: $${s.budget.toFixed(2)}. Change with /budget 10, turn off with /budget off.` : 'No budget set. Try /budget 5. (Costs are estimates, not the bill.)' }
+    }
+    await update($, dash, s => ({ ...s, budget: usd, isBudgetWarned: false }))
+
+    return { text: `Budget alarm set to $${usd.toFixed(2)} (estimated cost; the bill is the authority).` }
+  })
+
+  on('command.run', { command: 'edits' }, async $ => {
+    await $.ui.open({ id: 'edits', title: 'Edits' })
+
+    return { text: 'Edit replayer opened.' }
+  })
+
+  on('command.run', { command: 'wrapup' }, async $ => {
+    const s = await read($, dash)
+    const now = await $.clock.now()
+    const mins = s.startedAt > 0 ? Math.round((now - s.startedAt) / 60000) : 0
+
+    return {
+      text: `Wrap-up: ${s.edits} file edits, about $${s.sessionUsd.toFixed(2)} estimated cost, ${mins} minutes, context ${s.ctxPct}%.`,
+      context: ['Give a short recap of this chat: what was done, which files changed and why, what is unfinished, and the next step. Keep it under 12 lines.'],
+    }
+  })
+
   on('prompt.submit', async ($, e, next) => {
     const now = await read($, dash)
 
@@ -52,17 +103,29 @@ export const register: Register = on => {
     return next({ ...e, text: after })
   })
 
-  on('tool.call', async ($, e, next) => {
-    if (e.tool === 'Edit' || e.tool === 'Write') {
-      await update($, dash, s => ({ ...s, edits: s.edits + 1, isLaterOn: false }))
-    }
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
+    await update($, dash, s => ({ ...s, edits: s.edits + 1, isLaterOn: false }))
+    await update($, log, l => ({ items: [...l.items, { tool: 'Edit', file: e.file_path, before: clip(e.old_string), after: clip(e.new_string) }].slice(-30), idx: Math.min(l.items.length, 29) }))
+
+    return next(e)
+  })
+
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => {
+    await update($, dash, s => ({ ...s, edits: s.edits + 1, isLaterOn: false }))
+    await update($, log, l => ({ items: [...l.items, { tool: 'Write', file: e.file_path, before: '', after: clip(e.content) }].slice(-30), idx: Math.min(l.items.length, 29) }))
 
     return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
     const five = e.rateLimits.find(l => l.kind.includes('five'))
+    const cur = await read($, dash)
+    const usd = e.cost?.usd ?? cur.sessionUsd
 
+    if ((cur.budget ?? 0) > 0 && usd >= cur.budget && !cur.isBudgetWarned) {
+      $.ui.toast(`Budget alarm: this chat is at about $${usd.toFixed(2)} (limit $${cur.budget.toFixed(2)}). Estimate only.`, { timeoutMs: 10000 })
+      await update($, dash, s => ({ ...s, isBudgetWarned: true }))
+    }
     await update($, dash, s => ({
       ...s,
       sessionUsd: e.cost?.usd ?? s.sessionUsd,
@@ -91,6 +154,30 @@ export const register: Register = on => {
     })
 
     return result
+  })
+
+  // The edit replayer: step back and forward through the edits made in this chat.
+  on('ui.render', { component: 'Pane', requestId: 'edits' }, async ($, e) => {
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const l = await read($, log)
+    const rec = l.items[l.idx]
+
+    if (rec === undefined) {
+      return <Text dimColor>No edits yet in this chat.</Text>
+    }
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Box gap={1} alignItems="center">
+          <Button key="prev" label="Prev" onPress={() => update($, log, d => ({ ...d, idx: Math.max(0, d.idx - 1) }))} />
+          <Text size="footnote">{l.idx + 1} / {l.items.length}</Text>
+          <Button key="next" label="Next" onPress={() => update($, log, d => ({ ...d, idx: Math.min(d.items.length - 1, d.idx + 1) }))} />
+        </Box>
+        <Text weight="medium">{rec.tool} {rec.file}</Text>
+        {rec.before !== '' && <Text dimColor>was: {rec.before}</Text>}
+        <Text>{rec.tool === 'Write' ? 'wrote' : 'now'}: {rec.after}</Text>
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -146,6 +233,8 @@ export const register: Register = on => {
             <Button key="review" label="Review" onPress={() => $.prompt.submit({ text: 'Review the changes made in this chat for bugs and missed edge cases.', asUser: true })} />
             <Button key="audit" label="Audit" onPress={() => $.prompt.submit({ text: 'Audit the changes made in this chat for security issues and risky assumptions.', asUser: true })} />
             <Button key="handoff" label="Handoff" onPress={() => $.prompt.submit({ text: 'Write a handoff prompt for a fresh session: the goal, files touched and why, decisions made, what is done, remaining tasks in order, and gotchas. Output it in one fenced block.', asUser: true })} />
+            <Button key="tests" label="Tests" onPress={() => $.prompt.submit({ text: "Run this project's tests (find the right command first). Reply with one line: passed or failed, and what failed.", asUser: true })} />
+            <Button key="edits" label="Edits" onPress={() => $.ui.open({ id: 'edits', title: 'Edits' })} />
             <Button key="details" label="Details" onPress={() => $.ui.open({ id: 'meter', title: 'Meter' })} />
           </Box>
         </Box>
