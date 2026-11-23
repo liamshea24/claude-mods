@@ -1,0 +1,1 @@
+{ "name": "prompt-helpers", "version": "0.1.0", "description": "Prompt structurer, /handoff, next-step chips and effort hints", "types": "./types/index.d.ts" }

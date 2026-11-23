@@ -1,0 +1,12 @@
+{
+  "name": "claude-mods",
+  "owner": { "name": "claude-mods" },
+  "plugins": [
+    { "name": "racing-themes", "source": "./racing-themes" },
+    { "name": "dashboard", "source": "./dashboard" },
+    { "name": "meter", "source": "./meter" },
+    { "name": "guardrails", "source": "./guardrails" },
+    { "name": "prompt-helpers", "source": "./prompt-helpers" },
+    { "name": "skill-advisor", "source": "./skill-advisor" }
+  ]
+}
