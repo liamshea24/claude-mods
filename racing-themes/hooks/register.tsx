@@ -66,16 +66,16 @@ const GLASS_FRAME = {
   viewBox: 96,
   slice: 28,
   paths: [
-    { d: rr(0.5, 27), color: '#0b132299' },
-    { d: rr(1, 26), strokeWidth: 1.2, color: '#6f7e99' },
-    { d: rr(4, 23), strokeWidth: 1, color: '#2b3650' },
-    { d: 'M2 28A26 26 0 0 1 28 2H68', strokeWidth: 1.8, color: '#8493ae' },
-    { d: 'M94 68A26 26 0 0 1 68 94H28', strokeWidth: 1.4, color: '#566581' },
+    { d: rr(0.5, 27), color: '#0d0d0d99' },
+    { d: rr(1, 26), strokeWidth: 1.2, color: '#8a8a8a' },
+    { d: rr(4, 23), strokeWidth: 1, color: '#333333' },
+    { d: 'M2 28A26 26 0 0 1 28 2H68', strokeWidth: 1.8, color: '#a0a0a0' },
+    { d: 'M94 68A26 26 0 0 1 68 94H28', strokeWidth: 1.4, color: '#666666' },
     { d: 'M30 91H66', strokeWidth: 3, color: '#00000052' },
-    { d: 'M14 12A12 12 0 0 1 26 8Q18 10 14 18Z', color: '#7f8da8' },
+    { d: 'M14 12A12 12 0 0 1 26 8Q18 10 14 18Z', color: '#9a9a9a' },
   ],
 } as const
-const GLASS_SHEEN = { angle: 135, stops: [{ at: 0, color: '#1c2a45a6' }, { at: 0.6, color: '#0b132299' }, { at: 1, color: '#142038a6' }] } as const
+const GLASS_SHEEN = { angle: 135, stops: [{ at: 0, color: '#242424a6' }, { at: 0.6, color: '#0d0d0d99' }, { at: 1, color: '#181818a6' }] } as const
 type Frame = 'frame' | 'sheen' | 'clear'
 const pane = (tint: Color, kind: Frame): ThemeMessageRule =>
   kind === 'clear'
@@ -85,13 +85,13 @@ const pane = (tint: Color, kind: Frame): ThemeMessageRule =>
         padding: 16,
         backgroundColor: tint,
         fill: kind === 'frame' ? { vector: GLASS_FRAME } : { gradient: GLASS_SHEEN },
-        borderColor: '#6f7e99',
+        borderColor: '#8a8a8a',
         borderWidth: 1,
         shadow: { x: 0, y: 8, blur: 26, color: '#00000066' },
         color: '#ffffff',
       }
-const user = (kind: Frame): ThemeMessageRule => pane('#14224099', kind)
-const reply = (kind: Frame): ThemeMessageRule => pane('#0b132299', kind)
+const user = (kind: Frame): ThemeMessageRule => pane('#1a1a1a99', kind)
+const reply = (kind: Frame): ThemeMessageRule => pane('#0d0d0d99', kind)
 
 // If the app refuses any of that, the same look is applied without the box styling.
 const plain = (look: ThemeSetArgs): ThemeSetArgs => {
@@ -109,16 +109,23 @@ const plain = (look: ThemeSetArgs): ThemeSetArgs => {
   return copy as ThemeSetArgs
 }
 
+// Tool-use rows: the same glass, tighter. Built without a padding key (an undefined value is refused).
+const tool = (kind: Frame): ThemeMessageRule => {
+  const { padding: _padding, ...rest } = pane('#0d0d0d66', kind)
+
+  return { ...rest, radius: 14, paddingX: 12, paddingY: 6, shadow: 'none' }
+}
+
 const racing = (kind: Frame): ThemeSetArgs => ({
   colors: mk('Highway', '#2563b0', ['#141c12', '#182016', '#1c261a', '#ffffff'], ['#141c12', '#182016', '#1c261a', '#212c1f', '#ffffff'], true),
   overrideColorScheme: 'dark',
-  // No frosting: the app's panels are not blurred or tinted behind the chat and the type box.
-  backdrop: { scene: 'racing', glass: false },
+  // No blur: the app's panels (behind the type box, the sidebar strip) are a light dark tint, so the road shows through.
+  backdrop: { scene: 'racing', glass: { blur: 0, tint: '#0d0d0d', opacity: 0.18 } },
   style: {
     Text: { fontFamily: ['mono'], color: '#ffffff' },
     UserMessage: user(kind),
     AssistantMessage: reply(kind),
-    ToolUse: { ...pane('#0b132266', kind), radius: 14, padding: undefined, paddingX: 12, paddingY: 6, shadow: 'none' },
+    ToolUse: tool(kind),
   },
 })
 
@@ -173,7 +180,7 @@ const sceneFor = (phase: Phase, wx: Weather, pages: string[][], season: ReturnTy
   // The picture has a hard size limit; if the sign's lettering would push it over, draw without the sign.
   let built = buildHighway(phase, wx, pages, season)
 
-  if (built.length > 130_500) {
+  if (built.length > 130_900) {
     built = buildHighway(phase, wx, [], season)
   }
 

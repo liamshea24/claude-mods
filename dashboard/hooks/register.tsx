@@ -195,7 +195,7 @@ export const register: Register = on => {
     const lastTurn = s.lastSecs > 0 ? `last turn $${s.lastUsd.toFixed(2)} in ${took}, ${s.reusePct}% cached` : ''
 
     return (
-      <Box flexDirection="column" paddingX={2} paddingY={1} gap={1} backgroundColor="#0b132299" borderColor="#6f7e99" borderStyle="round">
+      <Box flexDirection="column" paddingX={2} paddingY={1} gap={1} backgroundColor="#0d0d0d99" borderColor="#8a8a8a" borderStyle="round">
         {unlogged > 0 && !s.isLaterOn && (
           <Box gap={1} alignItems="center">
             <Text size="footnote">{unlogged} file edits not logged yet</Text>
