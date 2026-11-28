@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, ThemeMessageRule, ThemeSetArgs } from 'claude-code'
 
 import { makeColors } from './make-colors.js'
-import { buildHighway } from './highway.js'
+import { ACT_LEN, buildHighway } from './highway.js'
 import type { Phase, Weather } from './highway.js'
 import { localClock, localDate, twilightAt, NWS_URL, phaseAt, seasonAt, WEATHER_URL, weatherFromCode, weatherFromText } from './sky.js'
 import { WHEEL, WORDS } from './spinner.js'
@@ -193,11 +193,11 @@ const pagesFor = (s: { wx: Weather; tempF: number | null; ctx?: number; usd?: nu
   return pages
 }
 
-// The highway runs three 15-minute schedules (each with its own traffic stop and crash, plus different extras) that
+// The highway is one program of four acts (about 17 minutes) with something new roughly every minute, then it starts over. The acts
 // take turns. The picture is redrawn whenever the sign or the sky changes, so every animation is started
 // part-way in (a negative delay), which keeps the road's timeline running instead of restarting it.
-const SCHEDULE_S = 912
-const VARIANTS = 3
+const VARIANTS = ACT_LEN.length
+const actLen = (): number => ACT_LEN[variant] ?? 912
 let variant = 0
 let variantStart = 0
 let lastTw = ''
@@ -313,12 +313,19 @@ export const register: Register = on => {
       $.ui.log(String(error))
     }
     refreshSky($, true).catch(error => $.ui.log(String(error)))
-    variant = Math.floor(Math.random() * VARIANTS)
-    variantStart = Date.now() - Math.random() * SCHEDULE_S * 1000
+    // Start at a random point in the program: pick an act, then a moment inside it.
+    let into = Math.random() * ACT_LEN.reduce((a, b) => a + b, 0)
+
+    variant = 0
+    while (variant < VARIANTS - 1 && into >= (ACT_LEN[variant] ?? 0)) {
+      into -= ACT_LEN[variant] ?? 0
+      variant += 1
+    }
+    variantStart = Date.now() - into * 1000
     $.clock.every(5000, () => {
-      if (Date.now() - variantStart >= SCHEDULE_S * 1000) {
+      if (Date.now() - variantStart >= actLen() * 1000) {
+        variantStart += actLen() * 1000
         variant = (variant + 1) % VARIANTS
-        variantStart += SCHEDULE_S * 1000
         $.ui.invalidate('ui.render')
       }
     })
@@ -454,7 +461,7 @@ export const register: Register = on => {
     const { Svg } = $.ui.resolve(e)
     const s = await read($, sky)
 
-    return <Svg source={sceneFor(s.phase, s.wx, pagesFor(s, Date.now()), seasonAt(Date.now()), ((Date.now() - variantStart) / 1000) % SCHEDULE_S, forcedPhase === undefined ? twilightAt(Date.now()) : null)} alt={`A top-down highway at ${s.phase}, ${s.wx}, with police chasing sports cars through traffic`} isInteractive />
+    return <Svg source={sceneFor(s.phase, s.wx, pagesFor(s, Date.now()), seasonAt(Date.now()), ((Date.now() - variantStart) / 1000) % actLen(), forcedPhase === undefined ? twilightAt(Date.now()) : null)} alt={`A top-down highway at ${s.phase}, ${s.wx}, with police chasing sports cars through traffic`} isInteractive />
   })
 
   // The working line: a wheel doing a burnout, with a driving word for what the turn is doing.
