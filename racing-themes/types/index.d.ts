@@ -6,6 +6,8 @@ export type Sky = {
   ctx?: number
   usd?: number
   five?: number
+  msg?: string
+  busy?: boolean
 }
 
 declare module 'claude-code' {

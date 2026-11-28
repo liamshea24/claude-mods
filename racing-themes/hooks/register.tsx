@@ -4,7 +4,7 @@ import type { EngineInterface, Register, ThemeMessageRule, ThemeSetArgs } from '
 import { makeColors } from './make-colors.js'
 import { buildHighway } from './highway.js'
 import type { Phase, Weather } from './highway.js'
-import { localClock, localDate, NWS_URL, phaseAt, seasonAt, WEATHER_URL, weatherFromCode, weatherFromText } from './sky.js'
+import { localClock, localDate, twilightAt, NWS_URL, phaseAt, seasonAt, WEATHER_URL, weatherFromCode, weatherFromText } from './sky.js'
 import { WHEEL, WORDS } from './spinner.js'
 
 type Color = NonNullable<ThemeMessageRule['color']>
@@ -129,6 +129,24 @@ const racing = (kind: Frame): ThemeSetArgs => ({
   },
 })
 
+// A quiet road hum with distant passing cars, and short cues (the app plays them only once the person
+// turns the theme's sound on; a build without sound support refuses the set, so the look is also tried without it).
+const SOUND: NonNullable<ThemeSetArgs['sound']> = {
+  ambience: {
+    layers: [
+      { wave: 'brown', drone: true, gain: 0.2, filter: { type: 'lowpass', hz: 320 } },
+      { wave: 'pink', scatter: 0.25, gain: 0.07, filter: { type: 'bandpass', hz: 700, to: 300 }, attack: 1.2, release: 1.6 },
+    ],
+  },
+  cues: {
+    send: { layers: [{ wave: 'triangle', notes: ['C6'], gain: 0.12 }] },
+    done: { layers: [{ wave: 'sine', notes: ['E5', 'A5'], step: 0.12, gain: 0.22 }] },
+    ask: { layers: [{ wave: 'triangle', notes: ['A4', 'A4'], step: 0.16, gain: 0.2 }] },
+    error: { layers: [{ wave: 'saw', notes: ['A3', 'E3'], step: 0.15, gain: 0.14 }] },
+  },
+}
+const racingVariants = (): ThemeSetArgs[] => [{ ...racing('frame'), sound: SOUND }, racing('frame'), racing('sheen'), racing('clear')]
+
 const LOOKS: Record<string, ThemeSetArgs> = {
   racing: racing('frame'),
   synthwave: {
@@ -144,7 +162,7 @@ const LOOKS: Record<string, ThemeSetArgs> = {
   },
 }
 
-const sky = atom({ plugin: 'racing-themes', key: 'sky' } as const, { phase: 'day', wx: 'clear', tempF: null, note: '', ctx: 0, usd: 0, five: 0 })
+const sky = atom({ plugin: 'racing-themes', key: 'sky' } as const, { phase: 'day', wx: 'clear', tempF: null, note: '', ctx: 0, usd: 0, five: 0, msg: '', busy: false })
 
 // What the person forced with /time and /weather; otherwise the real Chapel Hill sky.
 let forcedPhase: Phase | undefined
@@ -156,7 +174,7 @@ const WX_WORD: Record<Weather, string> = { clear: 'CLEAR', cloudy: 'CLOUDY', fog
 
 // The message sign's pages (up to three lines each). The time is rounded to 5 minutes so the sign
 // repaints (and restarts its cycle) rarely, and the chat stats page waits until there are numbers.
-const pagesFor = (s: { wx: Weather; tempF: number | null; ctx?: number; usd?: number; five?: number }, now: number): string[][] => {
+const pagesFor = (s: { wx: Weather; tempF: number | null; ctx?: number; usd?: number; five?: number; msg?: string; busy?: boolean }, now: number): string[][] => {
   const stamp = now - (now % 300_000)
   const pages: string[][] = [
     ['CHAPEL HILL', s.tempF === null ? WX_WORD[s.wx] : `${Math.round(s.tempF)}F ${WX_WORD[s.wx]}`],
@@ -167,27 +185,50 @@ const pagesFor = (s: { wx: Weather; tempF: number | null; ctx?: number; usd?: nu
     pages.push([`CONTEXT ${Math.round(s.ctx ?? 0)}%`, `COST $${(s.usd ?? 0).toFixed(2)}`, `5H LIMIT ${Math.round(s.five ?? 0)}%`])
   }
 
+  pages.push(['CLAUDE', s.busy === true ? 'WORKING' : 'READY'])
+  if ((s.msg ?? '') !== '') {
+    pages.unshift(s.msg!.toUpperCase().split('|').slice(0, 3).map(l => l.trim().slice(0, 14)))
+  }
+
   return pages
 }
 
-const sceneFor = (phase: Phase, wx: Weather, pages: string[][], season: ReturnType<typeof seasonAt>): string => {
-  const key = `${phase}/${wx}/${JSON.stringify(pages)}/${season}`
-  const hit = SCENES.get(key)
+// The highway runs three 15-minute schedules (each with its own traffic stop and crash, plus different extras) that
+// take turns. The picture is redrawn whenever the sign or the sky changes, so every animation is started
+// part-way in (a negative delay), which keeps the road's timeline running instead of restarting it.
+const SCHEDULE_S = 912
+const VARIANTS = 3
+let variant = 0
+let variantStart = 0
+let lastTw = ''
 
-  if (hit !== undefined) {
-    return hit
+const rephase = (svg: string, off: number): string => {
+  const o = off.toFixed(2)
+
+  return svg
+    .replace(/animation-delay:(-?\d+(?:\.\d+)?)s/g, (_, d: string) => `animation-delay:${(Number(d) - off).toFixed(2)}s`)
+    .replace(/\{([^{}]*animation:[^{}]*)\}/g, (all, body: string) => (body.includes('animation-delay') ? all : `{${body};animation-delay:-${o}s}`))
+}
+
+const sceneFor = (phase: Phase, wx: Weather, pages: string[][], season: ReturnType<typeof seasonAt>, off: number, tw: { color: string; opacity: number } | null): string => {
+  const key = `${phase}/${wx}/${JSON.stringify(pages)}/${season}/${variant}/${JSON.stringify(tw)}`
+  let base = SCENES.get(key)
+
+  if (base === undefined) {
+    base = buildHighway(phase, wx, pages, season, variant, tw)
+    SCENES.clear()
+    SCENES.set(key, base)
   }
-  // The picture has a hard size limit; if the sign's lettering would push it over, draw without the sign.
-  let built = buildHighway(phase, wx, pages, season)
+  let out = rephase(base, off)
+  let shown = pages
 
-  if (built.length > 130_900) {
-    built = buildHighway(phase, wx, [], season)
+  // The picture has a hard size limit; if the sign's lettering would push it over, draw fewer pages.
+  while (out.length > 130_900 && shown.length > 0) {
+    shown = shown.slice(0, -1)
+    out = rephase(buildHighway(phase, wx, shown, season, variant, tw), off)
   }
 
-  SCENES.clear()
-  SCENES.set(key, built)
-
-  return built
+  return out
 }
 
 // Works out Chapel Hill's time of day from the clock, and every 15 minutes asks Open-Meteo for the weather.
@@ -255,10 +296,11 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({ name: 'look', description: `Switch look: ${Object.keys(LOOKS).join(', ')}` })
     await $.command.register({ name: 'weather', description: 'Chapel Hill time and weather for the highway; /weather rain forces it, /weather auto goes back to live' })
+    await $.command.register({ name: 'sign', description: 'Put your own words on the highway sign: /sign GOOD LUCK | SHIP IT (use | for new lines, /sign off clears it)' })
     await $.command.register({ name: 'time', description: 'Force the highway to day, dusk or night; /time auto goes back to the real Chapel Hill time' })
     // Apply the look first, so a slow weather request can never hold it up.
     try {
-      const set = await applyLook($, [racing('frame'), racing('sheen'), racing('clear')])
+      const set = await applyLook($, racingVariants())
 
       $.ui.toast(set.isDrawn ? 'Highway look applied' : `Highway backdrop not drawn here: ${set.reason}`)
     } catch (error) {
@@ -271,13 +313,63 @@ export const register: Register = on => {
       $.ui.log(String(error))
     }
     refreshSky($, true).catch(error => $.ui.log(String(error)))
+    variant = Math.floor(Math.random() * VARIANTS)
+    variantStart = Date.now() - Math.random() * SCHEDULE_S * 1000
+    $.clock.every(5000, () => {
+      if (Date.now() - variantStart >= SCHEDULE_S * 1000) {
+        variant = (variant + 1) % VARIANTS
+        variantStart += SCHEDULE_S * 1000
+        $.ui.invalidate('ui.render')
+      }
+    })
     $.clock.every(60_000, () => {
+      const tw = JSON.stringify(forcedPhase === undefined ? twilightAt(Date.now()) : null)
+
+      if (tw !== lastTw) {
+        lastTw = tw
+        $.ui.invalidate('ui.render')
+      }
       tick += 1
       refreshSky($, tick % 15 === 0).catch(error => $.ui.log(String(error)))
     })
     $.ui.invalidate('ui.render')
 
     return next(e)
+  })
+
+  on('command.run', { command: 'sign' }, async ($, e) => {
+    const arg = e.args.trim()
+    const msg = arg.toLowerCase() === 'off' ? '' : arg
+
+    await update($, sky, s => ({ ...s, msg }))
+    $.ui.invalidate('ui.render')
+
+    return { text: msg === '' ? 'Sign message cleared.' : `Sign now shows: ${msg.toUpperCase()}` }
+  })
+
+  // The sign's status page: WORKING while Claude is on a turn, READY after.
+  on('prompt.submit', async ($, e, next) => {
+    try {
+      await update($, sky, s => ({ ...s, busy: true }))
+      $.ui.invalidate('ui.render')
+    } catch (error) {
+      $.ui.log(String(error))
+    }
+
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e)
+
+    try {
+      await update($, sky, s => ({ ...s, busy: false }))
+      $.ui.invalidate('ui.render')
+    } catch (error) {
+      $.ui.log(String(error))
+    }
+
+    return result
   })
 
   on('command.run', { command: 'look' }, async ($, e) => {
@@ -288,7 +380,7 @@ export const register: Register = on => {
       return { text: `Looks: ${Object.keys(LOOKS).join(', ')}. Usage: /look racing` }
     }
     try {
-      const set = await applyLook($, name === 'racing' ? [racing('frame'), racing('sheen'), racing('clear')] : [look])
+      const set = await applyLook($, name === 'racing' ? racingVariants() : [look])
 
       return { text: set.isDrawn ? `Look: ${name}` : `Set, but nothing draws it here: ${set.reason}` }
     } catch (error) {
@@ -362,7 +454,7 @@ export const register: Register = on => {
     const { Svg } = $.ui.resolve(e)
     const s = await read($, sky)
 
-    return <Svg source={sceneFor(s.phase, s.wx, pagesFor(s, Date.now()), seasonAt(Date.now()))} alt={`A top-down highway at ${s.phase}, ${s.wx}, with police chasing sports cars through traffic`} isInteractive />
+    return <Svg source={sceneFor(s.phase, s.wx, pagesFor(s, Date.now()), seasonAt(Date.now()), ((Date.now() - variantStart) / 1000) % SCHEDULE_S, forcedPhase === undefined ? twilightAt(Date.now()) : null)} alt={`A top-down highway at ${s.phase}, ${s.wx}, with police chasing sports cars through traffic`} isInteractive />
   })
 
   // The working line: a wheel doing a burnout, with a driving word for what the turn is doing.

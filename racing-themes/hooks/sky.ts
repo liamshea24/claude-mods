@@ -29,6 +29,26 @@ export const localClock = (utcMs: number): string => {
   return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`
 }
 
+// A gradual dusk and dawn: a tint laid over the scene that deepens with the sun's height (in steps of 0.04, so the
+// picture is redrawn only now and then). Warm over the day scene while the sun is low, then deep blue over the dusk scene.
+export const twilightAt = (utcMs: number): { color: string; opacity: number } | null => {
+  const e = sunElevation(utcMs)
+  const q = (v: number): number => Math.round(v / 0.04) * 0.04
+
+  if (e > 0 && e < 8) {
+    const o = q(0.14 * (1 - e / 8))
+
+    return o > 0 ? { color: '#ff9a5a', opacity: Number(o.toFixed(2)) } : null
+  }
+  if (e <= 0 && e > -6) {
+    const o = q(0.38 * (-e / 6))
+
+    return o > 0 ? { color: '#0d1426', opacity: Number(o.toFixed(2)) } : null
+  }
+
+  return null
+}
+
 // Chapel Hill's day and date, like SAT NOV 23.
 export const localDate = (utcMs: number): string => {
   const d = new Date(utcMs + easternOffsetHours(utcMs) * 3_600_000)
