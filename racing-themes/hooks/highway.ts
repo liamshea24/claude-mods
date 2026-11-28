@@ -787,19 +787,19 @@ const newsPanel = (): string => {
   if (n === undefined || n === null) {
     return ''
   }
-  const W = 190
-  const H = 129
-  const PX = 436
-  const PY = 38
-  const PW = 238
-  const PH = 162
+  const W = 235
+  const H = 160
+  const PX = -870
+  const PY = 34
+  const PW = 470
+  const PH = 320
   const at = (k: number, j: number): number => n.cam[k]?.[j] ?? 0
   const pos = (k: number): string => `translate(${(W / 2 - at(k, 1)).toFixed(1)}px,${(H / 2 - at(k, 2)).toFixed(1)}px)`
   const frames = n.cam.map((_, k) => `${pct(at(k, 0))}%{transform:${pos(k)}}`).join('')
   const inner = dupMarkup(() => (n.kind === 'crash' ? scenarios(false, id => id.startsWith('s8')) + crashScene() : scenarios(false, id => id.startsWith('ch'))))
   const lane = (x: number): string => `<path d="M${x} -4000V5000" stroke="#d6d6dc" stroke-width="2" stroke-dasharray="14 18"/>`
-  const tag = text('NEWS 6', 2, '#ffffff')
-  const live = text('LIVE', 2, '#ffffff')
+  const tag = text('NEWS 6', 3, '#ffffff')
+  const live = text('LIVE', 3, '#ffffff')
 
   vis('newsvis', [[n.t0, n.t1]], true, 0.6)
   rules += `.ncam{animation:ncam ${CYCLE}s linear infinite}\n@keyframes ncam{0%{transform:${pos(0)}}${frames}100%{transform:${pos(n.cam.length - 1)}}}\n`
@@ -812,8 +812,8 @@ const newsPanel = (): string => {
     '<rect x="849" y="-4000" width="3" height="9000" fill="#d9a21b"/><rect x="855" y="-4000" width="3" height="9000" fill="#d9a21b"/>' +
     `${lane(764)}${lane(804)}${lane(905)}${lane(945)}${inner}</g>` +
     `<rect width="${W}" height="${H}" fill="url(#scan)"/></svg>` +
-    `<rect x="${PX}" y="${PY}" width="${tag.width + 8}" height="14" fill="#d62020"/><g transform="translate(${PX + 4} ${PY + 4})">${tag.svg}</g>` +
-    `<rect class="hi" x="${PX + PW - live.width - 20}" y="${PY + 4}" width="6" height="6" fill="#ff2a2a"/><g transform="translate(${PX + PW - live.width - 10} ${PY + 4})">${live.svg}</g>` +
+    `<rect x="${PX}" y="${PY}" width="${tag.width + 12}" height="24" fill="#d62020"/><g transform="translate(${PX + 6} ${PY + 5})">${tag.svg}</g>` +
+    `<rect class="hi" x="${PX + PW - live.width - 30}" y="${PY + 6}" width="10" height="10" fill="#ff2a2a"/><g transform="translate(${PX + PW - live.width - 14} ${PY + 5})">${live.svg}</g>` +
     `<rect x="${PX}" y="${PY}" width="${PW}" height="${PH}" fill="none" stroke="#e8e8ee" stroke-width="1.5"/></g>`
   )
 }
